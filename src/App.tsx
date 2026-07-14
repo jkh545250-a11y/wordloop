@@ -1000,66 +1000,54 @@ function extractJsonObject(content: string) {
   return JSON.parse(raw.slice(start, end + 1));
 }
 
-async function requestDeepSeekJson(apiKey: string, prompt: string) {
-  const response = await fetch("/api/deepseek/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+async function requestDeepSeekContent({
+  apiKey,
+  prompt,
+  responseFormat,
+  systemPrompt,
+  temperature,
+}: {
+  apiKey: string;
+  prompt: string;
+  responseFormat?: "json_object";
+  systemPrompt: string;
+  temperature: number;
+}) {
+  const { data, error } = await supabase.functions.invoke("deepseek-proxy", {
+    body: {
+      apiKey,
+      prompt,
+      responseFormat,
+      systemPrompt,
+      temperature,
     },
-    body: JSON.stringify({
-      model: "deepseek-chat",
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: "你是英语学习产品中的翻译测评助手。只输出合法 JSON，不要输出 Markdown。",
-        },
-        { role: "user", content: prompt },
-      ],
-    }),
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `DeepSeek 请求失败：${response.status}`);
-  }
+  if (error) throw new Error(error.message || "DeepSeek Edge Function 请求失败。");
 
-  const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content;
+  const content = data?.content;
   if (typeof content !== "string") throw new Error("DeepSeek 返回格式异常。");
+  return content;
+}
+
+async function requestDeepSeekJson(apiKey: string, prompt: string) {
+  const content = await requestDeepSeekContent({
+    apiKey,
+    prompt,
+    responseFormat: "json_object",
+    systemPrompt: "你是英语学习产品中的翻译测评助手。只输出合法 JSON，不要输出 Markdown。",
+    temperature: 0.2,
+  });
   return extractJsonObject(content);
 }
 
 async function requestDeepSeekText(apiKey: string, prompt: string) {
-  const response = await fetch("/api/deepseek/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: "deepseek-chat",
-      temperature: 0.25,
-      messages: [
-        {
-          role: "system",
-          content: "你是英语学习产品中的词汇讲解助手。输出简洁中文正文，可以保留少量英文短语，不要输出 JSON。",
-        },
-        { role: "user", content: prompt },
-      ],
-    }),
+  const content = await requestDeepSeekContent({
+    apiKey,
+    prompt,
+    systemPrompt: "你是英语学习产品中的词汇讲解助手。输出简洁中文正文，可以保留少量英文短语，不要输出 JSON。",
+    temperature: 0.25,
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `DeepSeek 请求失败：${response.status}`);
-  }
-
-  const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content;
-  if (typeof content !== "string") throw new Error("DeepSeek 返回格式异常。");
   return content.trim();
 }
 
