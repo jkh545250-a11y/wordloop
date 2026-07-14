@@ -1250,7 +1250,6 @@ async function completeImportedWordsWithDeepSeek(apiKey: string, words: Array<st
     .map(({ index }) => index);
 
   if (!incompleteIndexes.length) return result;
-  if (!apiKey.trim()) return result;
 
   const batchSize = 40;
   for (let start = 0; start < incompleteIndexes.length; start += batchSize) {
@@ -2216,38 +2215,6 @@ function App() {
     return markedWords.length ? markedWords : sessionWords;
   }
 
-  function createMockTranslationPrompt(mode: TranslationMode, targetWords: VocabularyWord[]): TranslationPromptData {
-    const words = targetWords.map((word) => word.word);
-    if (mode === "zhToEn") {
-      return {
-        source: `请把下面这段话翻译成英文：团队正在复盘一次产品设计会议，大家希望用更务实的方式处理短期反馈，同时保持长期目标的韧性。请尽量自然地使用这些表达：${words.join("、")}。`,
-        highlightedWords: words,
-      };
-    }
-
-    return {
-      source: `During the design review, the team tried to stay pragmatic while discussing a complex user flow. They wanted every decision to be resilient enough for future changes, but still clear for today's release. Several details felt ephemeral, so the designer asked everyone to focus on the vocabulary and the real user context.`,
-      highlightedWords: words,
-    };
-  }
-
-  function createMockTranslationResult(source: string, userTranslation: string, targetWords: string[]): TranslationEvaluationResult {
-    return {
-      score: 82,
-      source,
-      critique: "本地 mock 测评：整体表达完整，核心语义基本覆盖。部分词可以再贴近上下文，而不是逐词直译。",
-      userTranslation,
-      reference: "这是本地生成的参考译文，用于在未配置 API Key 时测试测验流程。",
-      reviewRows: targetWords.map((word, index) => ({
-        word,
-        meaning: index % 3 === 0 ? "语义准确" : index % 3 === 1 ? "基本理解，语境略偏" : "建议结合上下文复习",
-        status: index % 3 === 0 ? "正确" : index % 3 === 1 ? "基本理解" : "待复习",
-        statusType: index % 3 === 0 ? "correct" : index % 3 === 1 ? "partial" : "review",
-        reason: index % 3 === 0 ? "译文覆盖了核心意思。" : index % 3 === 1 ? "大意接近，但搭配或语境可以更自然。" : "表达略生硬，建议回到词卡例句再看一遍。",
-      })),
-    };
-  }
-
   async function generatePromptForMode(mode: TranslationMode) {
     const targetWords = getQuizWords();
     const targetWordTexts = targetWords.map((word) => word.word);
@@ -2256,13 +2223,6 @@ function App() {
       return null;
     }
     setTranslationTargetWords(targetWordTexts);
-
-    if (!settings.deepseekApiKey.trim()) {
-      const prompt = createMockTranslationPrompt(mode, targetWords);
-      setTranslationPrompt(prompt);
-      setTranslationError("");
-      return prompt;
-    }
 
     setTranslationStatus("generating");
     setTranslationError("");
@@ -2319,19 +2279,6 @@ function App() {
       const evaluationTargetWords = translationTargetWords.length
         ? translationTargetWords
         : translationPrompt.highlightedWords;
-      if (!settings.deepseekApiKey.trim()) {
-        const result = createMockTranslationResult(
-          translationPrompt.source,
-          translationInput.trim(),
-          evaluationTargetWords,
-        );
-        completeCurrentLearningSession(result);
-        setTranslationResult(result);
-        window.location.hash = "/ai-translate/result";
-        setView("translateResult");
-        return;
-      }
-
       const result = await evaluateTranslationWithDeepSeek({
         apiKey: settings.deepseekApiKey.trim(),
         mode: translationMode,
@@ -2383,15 +2330,6 @@ function App() {
       return;
     }
 
-    const apiKey = settings.deepseekApiKey.trim();
-    if (!apiKey) {
-      setWordDetailsById((current) => ({
-        ...current,
-        [detailKey]: { error: "请先在设置中配置 DeepSeek API Key。" },
-      }));
-      return;
-    }
-
     setWordDetailsById((current) => ({ ...current, [detailKey]: { loading: true } }));
     try {
       const cachedDetails = await loadCachedWordDetails(userId, deckId, word.id);
@@ -2399,7 +2337,7 @@ function App() {
         setWordDetailsById((current) => ({ ...current, [detailKey]: { data: cachedDetails } }));
         return;
       }
-      const generatedDetails = await generateWordDetailsWithDeepSeek(apiKey, word);
+      const generatedDetails = await generateWordDetailsWithDeepSeek(settings.deepseekApiKey.trim(), word);
       await saveCachedWordDetails(userId, deckId, word.id, generatedDetails);
       setWordDetailsById((current) => ({ ...current, [detailKey]: { data: generatedDetails } }));
     } catch (error) {
@@ -2468,10 +2406,8 @@ function App() {
         }
         onSubmit={submitTranslation}
         onModeChange={changeTranslationMode}
-        onOpenSettings={() => setSettingsOpen(true)}
         onTranslationInputChange={setTranslationInput}
         prompt={translationPrompt}
-        settingsConfigured={Boolean(settings.deepseekApiKey.trim())}
         status={translationStatus}
         translationError={translationError}
         translationInput={translationInput}
@@ -3672,14 +3608,10 @@ function ExpandDeckDialog({
   if (!deck) return null;
 
   const extraCount = Math.max(0, targetCount - currentCount);
-  const canExpand = Boolean(apiKey.trim()) && extraCount > 0 && !submitting;
+  const canExpand = extraCount > 0 && !submitting;
 
   async function confirmExpand() {
     if (!deck || !extraCount || submitting) return;
-    if (!apiKey.trim()) {
-      setNotice("请先在设置里配置 DeepSeek API Key。");
-      return;
-    }
     setSubmitting(true);
     setNotice("正在用 AI 扩充词库...");
     try {
@@ -3949,7 +3881,7 @@ function QuickWordModal({
   async function confirmSave() {
     if (!words.length || submitting) return;
     setSubmitting(true);
-    setNotice(apiKey.trim() ? "正在用 AI 补齐释义和例句..." : "未配置 API Key，将直接导入纯单词。");
+    setNotice("正在用 AI 补齐释义和例句...");
     try {
       const completedWords = await completeImportedWordsWithDeepSeek(apiKey, words);
       onSave(completedWords, selectedDeckName);
@@ -4117,9 +4049,7 @@ function ImportDeckModal({
     setSubmitting(true);
     setNotice("");
     try {
-      const words = apiKey.trim()
-        ? await generateDeckWordsWithDeepSeek(apiKey.trim(), cleanTopic, wordCount)
-        : Array.from({ length: wordCount }, (_, index) => ({ word: `${cleanTopic} ${index + 1}` }));
+      const words = await generateDeckWordsWithDeepSeek(apiKey.trim(), cleanTopic, wordCount);
       if (!words.length) {
         setNotice("未生成可导入的单词。");
         return;
@@ -4144,11 +4074,7 @@ function ImportDeckModal({
     }
     setSubmitting(true);
     setNotice(
-      fileWords.some(needsWordCompletion)
-        ? apiKey.trim()
-          ? "正在用 AI 补齐释义和例句..."
-          : "未配置 API Key，将直接导入纯单词。"
-        : "",
+      fileWords.some(needsWordCompletion) ? "正在用 AI 补齐释义和例句..." : "",
     );
     try {
       const completedWords = await completeImportedWordsWithDeepSeek(apiKey, fileWords);
@@ -4327,11 +4253,7 @@ function ImportWordsModal({
     if (!deck || !words.length) return;
     setSubmitting(true);
     setNotice(
-      words.some(needsWordCompletion)
-        ? apiKey.trim()
-          ? "正在用 AI 补齐释义和例句..."
-          : "未配置 API Key，将直接导入纯单词。"
-        : "",
+      words.some(needsWordCompletion) ? "正在用 AI 补齐释义和例句..." : "",
     );
     try {
       const completedWords = await completeImportedWordsWithDeepSeek(apiKey, words);
@@ -4709,11 +4631,9 @@ function TranslationHeader({ onBack }: { onBack: () => void }) {
 function TranslationTestPage({
   onBack,
   onModeChange,
-  onOpenSettings,
   onSubmit,
   onTranslationInputChange,
   prompt,
-  settingsConfigured,
   status,
   translationError,
   translationInput,
@@ -4721,10 +4641,8 @@ function TranslationTestPage({
 }: {
   onBack: () => void;
   onModeChange: (mode: TranslationMode) => void;
-  onOpenSettings: () => void;
   onSubmit: () => void;
   prompt: TranslationPromptData | null;
-  settingsConfigured: boolean;
   status: TranslationStatus;
   translationError: string;
   onTranslationInputChange: (value: string) => void;
@@ -4854,15 +4772,10 @@ function TranslationTestPage({
             </button>
             {!canSubmit ? <span className="translation-disabled-tip">Please type your answer first</span> : null}
           </div>
-          {!settingsConfigured || translationError ? (
+          {translationError ? (
             <div className="translation-error">
               <Info size={16} />
-              <span>{translationError || "使用 AI 测评前需要先配置 DeepSeek API Key。"}</span>
-              {!settingsConfigured ? (
-                <button type="button" onClick={onOpenSettings}>
-                  去设置
-                </button>
-              ) : null}
+              <span>{translationError}</span>
             </div>
           ) : null}
         </div>
